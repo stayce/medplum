@@ -291,6 +291,23 @@ describe('OpenAI provider', () => {
     });
   });
 
+  test('Reads the error message Google wraps in an array', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      json: vi
+        .fn()
+        .mockResolvedValue([
+          { error: { code: 400, message: "Expected field 'arguments' to be a string.", status: 'INVALID_ARGUMENT' } },
+        ]),
+    });
+
+    await expect(callOpenAi(baseContext)).rejects.toThrow(
+      "OpenAI API error: 400 Bad Request - Expected field 'arguments' to be a string."
+    );
+  });
+
   describe('streamOpenAi', () => {
     test('Emits content events in order', async () => {
       const events = await collectNormalized([

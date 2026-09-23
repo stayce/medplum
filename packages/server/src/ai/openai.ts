@@ -365,7 +365,9 @@ async function throwIfNotOk(response: Response): Promise<void> {
   if (response.ok) {
     return;
   }
-  const errorData = await response.json().catch(() => ({}));
+  const body = await response.json().catch(() => ({}));
+  // Google APIs, Vertex AI among them, wrap the error object in an array
+  const errorData = Array.isArray(body) ? body[0] : body;
   const error = new Error(
     `OpenAI API error: ${response.status} ${response.statusText} - ${errorData?.error?.message || 'Unknown error'}`
   );
