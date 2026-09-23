@@ -193,6 +193,81 @@ describe('OpenAI provider', () => {
       ]);
     });
 
+    test('Keeps the extra_content a caller must send back with the call', async () => {
+      // Gemini 3 answers with a thought signature it requires on the replayed call next turn
+      const signed = {
+        id: 'function-call-1',
+        type: 'function',
+        function: { name: 'fhir_request', arguments: '{"method":"GET","path":"Patient"}' },
+        extra_content: { google: { thought_signature: 'sig-1' } },
+      };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ choices: [{ message: { content: null, tool_calls: [signed] } }] }),
+      });
+
+      const result = await callOpenAi({ ...baseContext, tools: fhirTools });
+      expect(result.toolCalls).toStrictEqual([
+        {
+          id: 'function-call-1',
+          type: 'function',
+          function: { name: 'fhir_request', arguments: { method: 'GET', path: 'Patient' } },
+          extra_content: { google: { thought_signature: 'sig-1' } },
+        },
+      ]);
+    });
+
+    test('Replays tool calls with their arguments as JSON strings', async () => {
+      // Callers replay the tool calls $ai returned, whose arguments arrive parsed into objects
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ choices: [{ message: { content: 'No match' } }] }),
+      });
+      const user = { role: 'user', content: 'Find Frodo' };
+      const toolResult = { role: 'tool', tool_call_id: 'function-call-1', content: '{"total":0}' };
+
+      await callOpenAi({
+        ...baseContext,
+        tools: fhirTools,
+        messages: [
+          user,
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'function-call-1',
+                type: 'function',
+                function: { name: 'fhir_request', arguments: { method: 'GET', path: 'Patient?name=Frodo' } },
+                extra_content: { google: { thought_signature: 'sig-1' } },
+              },
+            ],
+          },
+          toolResult,
+        ],
+      });
+
+      const body = JSON.parse((global.fetch as Mock).mock.calls[0][1].body);
+      expect(body.messages).toStrictEqual([
+        user,
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'function-call-1',
+              type: 'function',
+              function: { name: 'fhir_request', arguments: '{"method":"GET","path":"Patient?name=Frodo"}' },
+              extra_content: { google: { thought_signature: 'sig-1' } },
+            },
+          ],
+        },
+        toolResult,
+      ]);
+    });
+
     test('Throws with statusCode on a non-ok response', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false,
@@ -260,6 +335,31 @@ describe('OpenAI provider', () => {
               id: 'call_abc',
               type: 'function',
               function: { name: 'fhir_request', arguments: { method: 'GET', path: 'Patient?name=Frodo' } },
+            },
+          ],
+        },
+      ]);
+    });
+
+    test('Keeps the extra_content of a tool call streamed whole', async () => {
+      // Gemini streams each call in one delta, without an index, carrying its thought signature
+      const events = await collectNormalized(
+        [
+          'data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"id":"function-call-1","type":"function","function":{"name":"fhir_request","arguments":"{\\"method\\":\\"GET\\",\\"path\\":\\"Patient\\"}"},"extra_content":{"google":{"thought_signature":"sig-1"}}}]}}]}\n\n',
+          'data: [DONE]\n\n',
+        ],
+        { tools: fhirTools }
+      );
+
+      expect(events).toStrictEqual([
+        {
+          type: 'tool_calls',
+          toolCalls: [
+            {
+              id: 'function-call-1',
+              type: 'function',
+              function: { name: 'fhir_request', arguments: { method: 'GET', path: 'Patient' } },
+              extra_content: { google: { thought_signature: 'sig-1' } },
             },
           ],
         },
