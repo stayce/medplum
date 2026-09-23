@@ -1464,4 +1464,126 @@ describe('AI Operation', () => {
       expect(payloads[payloads.length - 1]).toBe('[DONE]');
     });
   });
+
+  describe('Vertex AI', () => {
+    /**
+     * Creates a project that selects Vertex AI, with no OpenAI key at all.
+     * @param location - Optional VERTEX_LOCATION secret
+     * @returns An access token for the project
+     */
+    async function vertexProject(location?: string): Promise<string> {
+      return initTestAuth({
+        project: {
+          features: ['ai'],
+          secret: [
+            { name: 'LLM_PROVIDER', valueString: 'vertex' },
+            ...(location ? [{ name: 'VERTEX_LOCATION', valueString: location }] : []),
+          ],
+        },
+      });
+    }
+
+    test("Calls Vertex with a token from the server's Google credentials", async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ choices: [{ message: { content: 'ok' } }] }),
+      });
+
+      const res = await request(app)
+        .post(`/fhir/R4/$ai`)
+        .set('Authorization', 'Bearer ' + (await vertexProject()))
+        .set('Content-Type', ContentType.FHIR_JSON)
+        .send({
+          resourceType: 'Parameters',
+          parameter: [
+            { name: 'messages', valueString: JSON.stringify([{ role: 'user', content: 'hi' }]) },
+            { name: 'model', valueString: 'google/gemini-3.5-flash' },
+          ],
+        });
+
+      expect(res).toHaveStatus(200);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/endpoints/openapi/chat/completions',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer ya29.test-token', 'Content-Type': 'application/json' },
+        })
+      );
+      expect((res.body as Parameters).parameter?.find((p) => p.name === 'content')?.valueString).toBe('ok');
+    });
+
+    test('Keeps tools with a reasoning effort on chat completions, and returns the thought signature', async () => {
+      // Spaces sends a reasoning effort with every tool call; Vertex has no Responses endpoint, and
+      // Gemini calls OpenAI's xhigh level max
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'function-call-1',
+                    type: 'function',
+                    function: { name: 'fhir_request', arguments: '{"method":"GET","path":"Patient"}' },
+                    extra_content: { google: { thought_signature: 'sig-1' } },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      });
+
+      const res = await request(app)
+        .post(`/fhir/R4/$ai`)
+        .set('Authorization', 'Bearer ' + (await vertexProject('europe-west2')))
+        .set('Content-Type', ContentType.FHIR_JSON)
+        .send({
+          resourceType: 'Parameters',
+          parameter: [
+            { name: 'messages', valueString: JSON.stringify([{ role: 'user', content: 'find patients' }]) },
+            { name: 'model', valueString: 'google/gemini-3.5-flash' },
+            { name: 'tools', valueString: JSON.stringify(fhirTools) },
+            { name: 'reasoning_effort', valueString: 'xhigh' },
+          ],
+        });
+
+      expect(res).toHaveStatus(200);
+      const [url, init] = (global.fetch as Mock).mock.calls[0];
+      expect(url).toBe(
+        'https://europe-west2-aiplatform.googleapis.com/v1/projects/test-project/locations/europe-west2/endpoints/openapi/chat/completions'
+      );
+      expect(JSON.parse(init.body).reasoning_effort).toBe('max');
+
+      const toolCalls = JSON.parse(
+        (res.body as Parameters).parameter?.find((p) => p.name === 'tool_calls')?.valueString as string
+      );
+      expect(toolCalls[0].extra_content).toStrictEqual({ google: { thought_signature: 'sig-1' } });
+    });
+
+    test('Rejects a location that would change the host the token is sent to', async () => {
+      global.fetch = vi.fn();
+
+      const res = await request(app)
+        .post(`/fhir/R4/$ai`)
+        .set('Authorization', 'Bearer ' + (await vertexProject('attacker.example#')))
+        .set('Content-Type', ContentType.FHIR_JSON)
+        .send({
+          resourceType: 'Parameters',
+          parameter: [
+            { name: 'messages', valueString: JSON.stringify([{ role: 'user', content: 'hi' }]) },
+            { name: 'model', valueString: 'google/gemini-3.5-flash' },
+          ],
+        });
+
+      expect(res).toHaveStatus(400);
+      expect((res.body as OperationOutcome).issue?.[0]?.details?.text).toBe(
+        'Invalid Vertex AI location: attacker.example#'
+      );
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -6,6 +6,7 @@ import type { OperationDefinitionParameter, ParametersParameter } from '@medplum
 import type { Response as ExpressResponse, Request } from 'express';
 import type { AiApi, AiContext, AiResult } from '../../ai/openai';
 import { callOpenAi, streamOpenAi } from '../../ai/openai';
+import { getVertexEndpoint } from '../../ai/vertex';
 import { getAuthenticatedContext } from '../../context';
 import { getLogger } from '../../logger';
 import { sendOutcome } from '../outcomes';
@@ -51,7 +52,7 @@ const operation = makeOperationDefinition(
         'in',
         'api',
         'code',
-        'Which OpenAI endpoint to call: chat or responses (optional). By default chat is used, except that tools together with a reasoning_effort other than none route to responses, which chat completions rejects.'
+        'Which OpenAI endpoint to call: chat or responses (optional). By default chat is used, except that tools together with a reasoning_effort other than none route to responses, which chat completions rejects. Vertex AI always defaults to chat, because it has no responses endpoint.'
       ),
       param('out', 'content', 'string', 'AI response content'),
       param('out', 'tool_calls', 'string', 'JSON string containing tool calls array'),
@@ -131,15 +132,25 @@ export async function aiOperation(
     return [forbidden];
   }
 
-  const apiKey = ctx.project.secret?.find((s) => s.name === 'OPENAI_API_KEY')?.valueString;
-  if (!apiKey) {
-    return [badRequest('OpenAI API key not configured in project secrets')];
-  }
+  const secret = (name: string): string | undefined => ctx.project.secret?.find((s) => s.name === name)?.valueString;
+  const vertex = secret('LLM_PROVIDER') === 'vertex';
 
-  let baseUrl = ctx.project.secret?.find((s) => s.name === 'LLM_BASE_URL')?.valueString ?? 'https://api.openai.com/v1';
-  // Strip any trailing slashes without a regex to avoid backtracking concerns
-  while (baseUrl.endsWith('/')) {
-    baseUrl = baseUrl.slice(0, -1);
+  let apiKey: string;
+  let baseUrl: string;
+  if (vertex) {
+    ({ apiKey, baseUrl } = await getVertexEndpoint(secret('VERTEX_LOCATION') ?? 'global'));
+  } else {
+    const openAiKey = secret('OPENAI_API_KEY');
+    if (!openAiKey) {
+      return [badRequest('OpenAI API key not configured in project secrets')];
+    }
+    apiKey = openAiKey;
+
+    baseUrl = secret('LLM_BASE_URL') ?? 'https://api.openai.com/v1';
+    // Strip any trailing slashes without a regex to avoid backtracking concerns
+    while (baseUrl.endsWith('/')) {
+      baseUrl = baseUrl.slice(0, -1);
+    }
   }
 
   const params = parseInputParameters<AIOperationParameters>(operation, req);
@@ -180,8 +191,11 @@ export async function aiOperation(
     model: params.model,
     tools,
     temperature: params.temperature,
-    reasoningEffort: params.reasoning_effort,
-    api: params.api,
+    // Gemini names its top reasoning level `max` and rejects OpenAI's `xhigh`
+    reasoningEffort: vertex && params.reasoning_effort === 'xhigh' ? 'max' : params.reasoning_effort,
+    // Vertex serves Gemini only through chat completions, so tools with a reasoning effort must not
+    // be routed to the Responses API there
+    api: params.api ?? (vertex ? 'chat' : undefined),
     apiKey,
     baseUrl,
   };
