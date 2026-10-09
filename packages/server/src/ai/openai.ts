@@ -369,7 +369,7 @@ async function throwIfNotOk(response: Response): Promise<void> {
   // Google APIs, Vertex AI among them, wrap the error object in an array
   const errorData = Array.isArray(body) ? body[0] : body;
   const error = new Error(
-    `OpenAI API error: ${response.status} ${response.statusText} - ${errorData?.error?.message || 'Unknown error'}`
+    `AI provider error: ${response.status} ${response.statusText} - ${errorData?.error?.message || 'Unknown error'}`
   );
   (error as Error & { statusCode: number }).statusCode = response.status;
   throw error;
@@ -663,7 +663,7 @@ async function streamResponses(response: Response, onEvent: (event: AiStreamEven
     if (parsed.type === 'response.failed' || parsed.type === 'error') {
       const detail = isObject(parsed.response) && isObject(parsed.response.error) ? parsed.response.error : parsed;
       const message = isObject(detail) && typeof detail.message === 'string' ? detail.message : 'Unknown error';
-      throw new Error(`OpenAI API error: ${message}`);
+      throw new Error(`AI provider error: ${message}`);
     }
 
     if (parsed.type === 'response.output_text.delta' && typeof parsed.delta === 'string' && parsed.delta !== '') {

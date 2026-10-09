@@ -142,7 +142,9 @@ export async function aiOperation(
   } else {
     const openAiKey = secret('OPENAI_API_KEY');
     if (!openAiKey) {
-      return [badRequest('OpenAI API key not configured in project secrets')];
+      return [
+        badRequest('No AI provider configured in project secrets: set LLM_PROVIDER to vertex, or set OPENAI_API_KEY'),
+      ];
     }
     apiKey = openAiKey;
 

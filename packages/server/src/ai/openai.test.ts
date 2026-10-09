@@ -277,7 +277,7 @@ describe('OpenAI provider', () => {
       });
 
       await expect(callOpenAi(baseContext)).rejects.toThrow(
-        'OpenAI API error: 429 Too Many Requests - Rate limit reached'
+        'AI provider error: 429 Too Many Requests - Rate limit reached'
       );
 
       global.fetch = vi.fn().mockResolvedValue({
@@ -304,7 +304,7 @@ describe('OpenAI provider', () => {
     });
 
     await expect(callOpenAi(baseContext)).rejects.toThrow(
-      "OpenAI API error: 400 Bad Request - Expected field 'arguments' to be a string."
+      "AI provider error: 400 Bad Request - Expected field 'arguments' to be a string."
     );
   });
 
@@ -467,7 +467,7 @@ describe('OpenAI provider', () => {
       // Without this check the error body parses as zero SSE frames, so the caller sees an empty
       // but apparently successful stream.
       await expect(streamOpenAi(baseContext, () => undefined)).rejects.toThrow(
-        'OpenAI API error: 401 Unauthorized - Incorrect API key provided'
+        'AI provider error: 401 Unauthorized - Incorrect API key provided'
       );
     });
 
@@ -665,11 +665,11 @@ describe('OpenAI provider', () => {
           ['data: {"type":"response.failed","response":{"error":{"message":"Rate limited"}}}\n\n'],
           responsesContext
         )
-      ).rejects.toThrow('OpenAI API error: Rate limited');
+      ).rejects.toThrow('AI provider error: Rate limited');
 
       await expect(
         collectEvents(['data: {"type":"error","message":"Bad frame"}\n\n'], responsesContext)
-      ).rejects.toThrow('OpenAI API error: Bad frame');
+      ).rejects.toThrow('AI provider error: Bad frame');
     });
   });
 });

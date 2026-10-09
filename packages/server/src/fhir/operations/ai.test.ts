@@ -362,7 +362,7 @@ describe('AI Operation', () => {
 
     expect(res).toHaveStatus(400);
     expect((res.body as OperationOutcome).issue?.[0]?.details?.text).toBe(
-      'OpenAI API key not configured in project secrets'
+      'No AI provider configured in project secrets: set LLM_PROVIDER to vertex, or set OPENAI_API_KEY'
     );
   });
 

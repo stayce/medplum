@@ -416,7 +416,7 @@ if (toolCallsParam?.valueString) {
       "severity": "error",
       "code": "invalid",
       "details": {
-        "text": "OpenAI API key not configured in project secrets"
+        "text": "No AI provider configured in project secrets: set LLM_PROVIDER to vertex, or set OPENAI_API_KEY"
       }
     }
   ]
@@ -433,7 +433,7 @@ if (toolCallsParam?.valueString) {
       "severity": "error",
       "code": "invalid",
       "details": {
-        "text": "Failed to call OpenAI API: OpenAI API error: 401 Unauthorized - Incorrect API key provided"
+        "text": "Failed to call AI API: AI provider error: 401 Unauthorized - Incorrect API key provided"
       }
     }
   ]
