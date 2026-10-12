@@ -63,6 +63,10 @@ export interface AiContext {
  *
  * A truncated or malformed call keeps `arguments` as that raw string, so callers must expect
  * either. A call carrying no arguments at all becomes `{}`.
+ *
+ * `extra_content` is kept verbatim when the provider sends it, because a caller that replays the
+ * call in the next turn must send it back. Gemini 3 carries its thought signature there and
+ * rejects a follow-up request whose tool call lacks it.
  */
 interface AiToolCall {
   readonly id?: string;
@@ -71,6 +75,7 @@ interface AiToolCall {
     readonly name?: string;
     readonly arguments: unknown;
   };
+  readonly extra_content?: unknown;
 }
 
 /**
@@ -117,6 +122,7 @@ interface StreamedToolCall {
   type?: string;
   name?: string;
   arguments: string;
+  extraContent?: unknown;
 }
 
 /**
@@ -157,6 +163,35 @@ export function selectApi(context: AiContext): AiApi {
 }
 
 /**
+ * Puts replayed tool calls back into the form chat-completions requires.
+ *
+ * Callers replay the tool calls this provider returned as history on the next turn, and those
+ * carry `arguments` already parsed into objects. Chat-completions accepts only the JSON string
+ * form, as {@link toResponsesInput} already provides for the Responses API; a strict provider
+ * such as Vertex AI rejects the request otherwise.
+ * @param messages - Messages in chat-completions form, possibly with parsed tool call arguments
+ * @returns The messages with every tool call's arguments as a JSON string
+ */
+function toChatMessages(messages: unknown[]): unknown[] {
+  return messages.map((message) => {
+    if (!isObject(message) || !Array.isArray(message.tool_calls)) {
+      return message;
+    }
+    return {
+      ...message,
+      tool_calls: message.tool_calls.map((toolCall) =>
+        isObject(toolCall) && isObject(toolCall.function)
+          ? {
+              ...toolCall,
+              function: { ...toolCall.function, arguments: stringifyArguments(toolCall.function.arguments) },
+            }
+          : toolCall
+      ),
+    };
+  });
+}
+
+/**
  * Builds the chat-completions request body.
  * @param context - The request and its credentials
  * @param stream - Whether to ask for a streamed response
@@ -165,7 +200,7 @@ export function selectApi(context: AiContext): AiApi {
 function buildChatRequestBody(context: AiContext, stream: boolean): Record<string, unknown> {
   const requestBody: Record<string, unknown> = {
     model: context.model,
-    messages: context.messages,
+    messages: toChatMessages(context.messages),
   };
 
   if (context.temperature !== undefined) {
@@ -330,9 +365,11 @@ async function throwIfNotOk(response: Response): Promise<void> {
   if (response.ok) {
     return;
   }
-  const errorData = await response.json().catch(() => ({}));
+  const body = await response.json().catch(() => ({}));
+  // Google APIs, Vertex AI among them, wrap the error object in an array
+  const errorData = Array.isArray(body) ? body[0] : body;
   const error = new Error(
-    `OpenAI API error: ${response.status} ${response.statusText} - ${errorData?.error?.message || 'Unknown error'}`
+    `AI provider error: ${response.status} ${response.statusText} - ${errorData?.error?.message || 'Unknown error'}`
   );
   (error as Error & { statusCode: number }).statusCode = response.status;
   throw error;
@@ -368,6 +405,9 @@ function accumulateToolCallDeltas(acc: StreamedToolCall[], deltas: unknown[]): v
     if (typeof fn?.arguments === 'string') {
       call.arguments += fn.arguments;
     }
+    if (delta.extra_content !== undefined) {
+      call.extraContent = delta.extra_content;
+    }
   }
 }
 
@@ -381,6 +421,7 @@ function toAiToolCalls(acc: StreamedToolCall[]): AiToolCall[] {
     id: call.id,
     type: call.type ?? 'function',
     function: { name: call.name, arguments: parseArguments(call.arguments) },
+    ...(call.extraContent === undefined ? {} : { extra_content: call.extraContent }),
   }));
 }
 
@@ -447,6 +488,7 @@ function parseCompletion(completion: unknown): AiResult {
           name: typeof fn?.name === 'string' ? fn.name : undefined,
           arguments: parseArguments(typeof fn?.arguments === 'string' ? fn.arguments : ''),
         },
+        ...(toolCall.extra_content === undefined ? {} : { extra_content: toolCall.extra_content }),
       };
     }),
   };
@@ -621,7 +663,7 @@ async function streamResponses(response: Response, onEvent: (event: AiStreamEven
     if (parsed.type === 'response.failed' || parsed.type === 'error') {
       const detail = isObject(parsed.response) && isObject(parsed.response.error) ? parsed.response.error : parsed;
       const message = isObject(detail) && typeof detail.message === 'string' ? detail.message : 'Unknown error';
-      throw new Error(`OpenAI API error: ${message}`);
+      throw new Error(`AI provider error: ${message}`);
     }
 
     if (parsed.type === 'response.output_text.delta' && typeof parsed.delta === 'string' && parsed.delta !== '') {

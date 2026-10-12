@@ -28,6 +28,29 @@ By default, the `$ai` operation calls OpenAI directly at `https://api.openai.com
 
 The `OPENAI_API_KEY` secret is sent as the `Authorization: Bearer` token to whichever endpoint is configured, so set it to the LiteLLM proxy's key (master key or virtual key) when using a proxy. Because LiteLLM is OpenAI-API-compatible, the request and response formats — including function calling and streaming — are unchanged, and the `model` parameter accepts any model name your proxy is configured to serve.
 
+### Using Google Gemini
+
+#### Vertex AI
+
+To call Gemini through [Vertex AI](https://cloud.google.com/vertex-ai) (now also called Gemini Enterprise Agent Platform), add a project secret named `LLM_PROVIDER` set to `vertex`. The operation then sends requests to Vertex AI's OpenAI-compatible chat completions endpoint, and `OPENAI_API_KEY` and `LLM_BASE_URL` are not used.
+
+Vertex AI accepts only short-lived Google OAuth tokens, so the Medplum server authenticates as its own Google Cloud identity through [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials). On GKE, Cloud Run or Compute Engine that is the attached service account; elsewhere, point `GOOGLE_APPLICATION_CREDENTIALS` on the server at a credentials file. The identity needs the `roles/aiplatform.user` role, and the Vertex AI API (`aiplatform.googleapis.com`) must be enabled. Requests go to the Google Cloud project those credentials belong to; set `GOOGLE_CLOUD_PROJECT` on the server to use a different one.
+
+| Secret            | Required | Description                                                                                                                        |
+| ----------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `LLM_PROVIDER`    | Yes      | `vertex`                                                                                                                           |
+| `VERTEX_LOCATION` | No       | A Vertex AI location such as `us-central1` or `europe-west2`. Defaults to `global`, which does not guarantee in-region processing. |
+
+Use Vertex AI model names with the `google/` prefix, for example `google/gemini-3.5-flash`. Vertex AI has no Responses API for Gemini, so these requests always use chat completions. Gemini names its highest reasoning level `max`, so a `reasoning_effort` of `xhigh` is sent as `max`. Tool calls keep Gemini's `extra_content` (its thought signature), which must be sent back unchanged with the tool call in the next request.
+
+Generative AI on Vertex AI is on Google Cloud's list of [HIPAA-covered products](https://cloud.google.com/security/compliance/hipaa).
+
+#### Gemini API
+
+The Gemini API (keys from Google AI Studio) also has an OpenAI-compatible endpoint, so it needs no `LLM_PROVIDER`: set `LLM_BASE_URL` to `https://generativelanguage.googleapis.com/v1beta/openai` and `OPENAI_API_KEY` to a Gemini API key. It has no Responses API either, so pass `api` = `chat` when a request includes both `tools` and a `reasoning_effort`, and keep `reasoning_effort` at `high` or below. The Gemini API is not on Google Cloud's list of HIPAA-covered products; use Vertex AI for PHI.
+
+To offer Gemini models in [Spaces](/docs/provider/spaces), list them in the `aiModels` project setting.
+
 ## Endpoint
 
 ```
@@ -393,7 +416,7 @@ if (toolCallsParam?.valueString) {
       "severity": "error",
       "code": "invalid",
       "details": {
-        "text": "OpenAI API key not configured in project secrets"
+        "text": "No AI provider configured in project secrets: set LLM_PROVIDER to vertex, or set OPENAI_API_KEY"
       }
     }
   ]
@@ -410,7 +433,7 @@ if (toolCallsParam?.valueString) {
       "severity": "error",
       "code": "invalid",
       "details": {
-        "text": "Failed to call OpenAI API: OpenAI API error: 401 Unauthorized - Incorrect API key provided"
+        "text": "Failed to call AI API: AI provider error: 401 Unauthorized - Incorrect API key provided"
       }
     }
   ]
@@ -437,7 +460,7 @@ if (toolCallsParam?.valueString) {
 ## Limitations
 
 - **Streaming Mode**: Tool calls are not supported when streaming is enabled
-- **Model Support**: OpenAI models, or any model exposed through an OpenAI-compatible endpoint such as a LiteLLM proxy (configured via the `LLM_BASE_URL` secret)
+- **Model Support**: OpenAI models, Gemini through Vertex AI (`LLM_PROVIDER` = `vertex`), or any model exposed through an OpenAI-compatible endpoint such as a LiteLLM proxy (configured via the `LLM_BASE_URL` secret)
 - **Tool Execution**: The operation returns suggested tool calls but does not execute them automatically
 
 ## Common Use Cases
