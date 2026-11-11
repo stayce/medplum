@@ -79,6 +79,52 @@ describe('New user', () => {
     expect(res.body.issue[0].details.text).toBe('Registration is disabled');
   });
 
+  test('Register disabled blocks a new project', async () => {
+    getConfig().registerEnabled = false;
+    const res = await request(app)
+      .post('/auth/newuser')
+      .type('json')
+      .send({
+        firstName: 'Alexander',
+        lastName: 'Hamilton',
+        email: `alex${randomUUID()}@example.com`,
+        password: 'password!@#',
+        recaptchaToken: 'xyz',
+        projectId: 'new',
+      });
+
+    expect(res).toHaveStatus(400);
+    expect(res.body.issue[0].details.text).toBe('Registration is disabled');
+  });
+
+  test('Register disabled allows sign-up into an existing project', async () => {
+    const { project } = await withTestContext(() =>
+      registerNew({
+        firstName: 'Owner',
+        lastName: 'Owner',
+        projectName: 'RegisterDisabledTest',
+        email: `owner${randomUUID()}@example.com`,
+        password: 'password!@#',
+      })
+    );
+
+    getConfig().registerEnabled = false;
+    const res = await request(app)
+      .post('/auth/newuser')
+      .type('json')
+      .send({
+        projectId: project.id,
+        firstName: 'Patient',
+        lastName: 'One',
+        email: `patient${randomUUID()}@example.com`,
+        password: 'password!@#',
+        recaptchaToken: 'xyz',
+      });
+
+    expect(res).toHaveStatus(200);
+    expect(res.body.login).toBeDefined();
+  });
+
   test('Missing recaptcha', async () => {
     const res = await request(app)
       .post('/auth/newuser')
