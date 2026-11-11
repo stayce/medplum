@@ -40,12 +40,6 @@ export const newUserValidator = makeValidationMiddleware([
  */
 export async function newUserHandler(req: Request, res: Response): Promise<void> {
   const config = getConfig();
-  if (config.registerEnabled === false) {
-    // Explicitly check for "false" because the config value may be undefined
-    sendOutcome(res, badRequest('Registration is disabled'));
-    return;
-  }
-
   let projectId = req.body.projectId as string | undefined;
 
   // If the user specifies a client ID, then make sure it is compatible with the project
@@ -61,6 +55,14 @@ export async function newUserHandler(req: Request, res: Response): Promise<void>
     } else {
       projectId = client.meta?.project;
     }
+  }
+
+  // As in Google sign-in, registerEnabled only blocks sign-up without an existing project.
+  // Sign-up into a project stays governed by projectRegistrationAllowed below.
+  if (config.registerEnabled === false && (!projectId || projectId === 'new')) {
+    // Explicitly check for "false" because the config value may be undefined
+    sendOutcome(res, badRequest('Registration is disabled'));
+    return;
   }
 
   // If the user is a practitioner, then projectId should be undefined
