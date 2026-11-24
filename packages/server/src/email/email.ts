@@ -105,6 +105,7 @@ async function sendEmailViaSmtp(
   projectId?: string
 ): Promise<void> {
   const transport = createTransport({
+    name: new URL(getConfig().appBaseUrl).hostname,
     host: smtpConfig.host,
     port: smtpConfig.port,
     secure: smtpConfig.secure,

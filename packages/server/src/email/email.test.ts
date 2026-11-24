@@ -317,6 +317,8 @@ describe('Email', () => {
 
   test('Send via SMTP', async () => {
     const config = getConfig();
+    const originalAppBaseUrl = config.appBaseUrl;
+    config.appBaseUrl = 'https://workspace.example.com:8443/app/';
     config.smtp = {
       host: 'smtp.example.com',
       port: 587,
@@ -337,9 +339,11 @@ describe('Email', () => {
       });
 
       expect(mockCreateTransport).toHaveBeenCalledTimes(1);
+      expect(mockCreateTransport).toHaveBeenCalledWith(expect.objectContaining({ name: 'workspace.example.com' }));
       expect(mockSendMail).toHaveBeenCalledTimes(1);
       expect(mockSESv2Client.send.callCount).toBe(0);
     } finally {
+      config.appBaseUrl = originalAppBaseUrl;
       config.smtp = undefined;
     }
   });
